@@ -1,0 +1,53 @@
+# Ultralytics YOLO 🚀, AGPL-3.0 license
+# YOLOv10 object detection model. For Usage examples see https://docs.ultralytics.com/tasks/detect
+
+# Parameters
+nc: 80 # number of classes
+scales: # model compound scaling constants, i.e. 'model=yolov10n.yaml' will call yolov10.yaml with scale 'n'
+  # [depth, width, max_channels]
+  s: [0.33, 0.50, 1024]
+fusion_mode: concat
+node_mode: C2f
+head_channel: 256
+
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, Conv, [64, 3, 2]] # 0-P1/2
+  - [-1, 1, Conv, [128, 3, 2]] # 1-P2/4
+  - [-1, 3, MDDC, [128, True]]
+  - [-1, 1, Conv, [256, 3, 2]] # 3-P3/8
+  - [-1, 6, MDDC, [256, True]]
+  - [-1, 1, SCDown, [512, 3, 2]] # 5-P4/16
+  - [-1, 6, MDDC, [512, True]]
+  - [-1, 1, SCDown, [1024, 3, 2]] # 7-P5/32
+  - [-1, 3, MDDC, [1024, True]]
+  - [-1, 1, SPPF, [1024, 5]] # 9
+  - [-1, 1, PSA, [1024]] # 10
+
+head:
+  - [4, 1, Conv, [head_channel]]  # 11-P3/8
+  - [6, 1, Conv, [head_channel]]  # 12-P4/16
+  - [10, 1, Conv, [head_channel]]  # 13-P5/32  
+
+  - [-1, 1, nn.Upsample, [None, 2, 'nearest']] # 14 P5->P4
+  - [[-1, 12], 1, Fusion, [fusion_mode]] # 15
+  - [-1, 3, node_mode, [head_channel]] # 16-P4/16
+
+  - [-1, 1, nn.Upsample, [None, 2, 'nearest']] # 17 P4->P3
+  - [[-1, 11], 1, Fusion, [fusion_mode]] # 18
+  - [-1, 3, node_mode, [head_channel]] # 19-P3/8
+
+  - [2, 1, LDConv, [head_channel, 3, 2]] # 20 P2->P3 
+  - [[-1, 11, 19], 1, Fusion, [fusion_mode]] # 21
+  - [-1, 1, WPM, []]  # 22 
+  - [-1, 3, node_mode, [head_channel]] # 23-P3/8
+
+  - [-1, 1, Conv, [head_channel, 3, 2]] # 24 P3->P4
+  - [[-1, 12, 16], 1, Fusion, [fusion_mode]] # 25
+  - [-1, 3, node_mode, [head_channel]] # 26 -P4/16
+
+  - [-1, 1, Conv, [head_channel, 3, 2]] # 27 P4->P5
+  - [[-1, 13], 1, Fusion, [fusion_mode]] # 28
+  - [-1, 3, node_mode, [head_channel]] # 29 -P5/32
+
+  - [[23, 26, 29], 1, v10Detect, [nc]]  # Detect(P3, P4, P5)
