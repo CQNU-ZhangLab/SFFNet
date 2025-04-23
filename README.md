@@ -105,6 +105,63 @@ conda activate SFFNet
 pip install -r requirements.txt
 pip install -e .
 ```
+## Data Preparation 📦
+To train on the VisDrone and UAVDT datasets, you need to organize them in the YOLO format. Follow the steps below to prepare your dataset:
+1. **Organize Images:**
+    Structure your dataset directories as follows:
+    ```shell
+    dataset/
+    ├── images/
+    │   ├── train/
+    │   │   ├── image1.jpg
+    │   │   ├── image2.jpg
+    │   │   └── ...
+    │   ├── val/
+    │   │   ├── image1.jpg
+    │   │   ├── image2.jpg
+    │   │   └── ...
+    └── labels/
+        ├── train/
+        │   ├── image1.txt
+        │   ├── image2.txt
+        │   └── ...
+        ├── val/
+        │   ├── image1.txt
+        │   ├── image2.txt
+        │   └── ...
+    ```
+    - **`images/train/`**: Contains all training images.
+    - **`images/val/`**: Contains all validation images.
+    - **`labels/train/`**: Contains all training labels.
+    - **`labels/val/`**: Contains all validation labels.
+
+2. **Update Configuration Files:**
+
+    Modify your [VisDrone.yml](https://github.com/CQNU-ZhangLab/SFFNet/blob/main/ultralytics/cfg/datasets/VisDrone.yaml) or [UAVDT.yml](https://github.com/CQNU-ZhangLab/SFFNet/blob/main/ultralytics/cfg/datasets/UAVDT.yaml)
+
+    ```yaml
+    path: # dataset root dir
+    train: # train images (relative to 'path')  
+    val: # val images (relative to 'path')  
+    test: # test images (optional)  
+    
+    # Your Dataset Classes
+    names:
+      0: pedestrian
+      1: people
+      2: bicycle
+      3: car
+      4: van
+      5: truck
+      6: tricycle
+      7: awning-tricycle
+      8: bus
+      9: motor
+
+    ```
+
+
+
 ## Quick validation ✅
 ```
 python val.py
