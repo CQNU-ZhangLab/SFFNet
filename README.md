@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="figures/title.png" width=70%> <br>
+</p>
+
 <h2 align="center">
   SFFNet: Synergistic Feature Fusion Network With Dual-Domain Edge Enhancement for UAV Image Object Detection
 </h2>
@@ -125,10 +129,10 @@ To train on the VisDrone and UAVDT datasets, you need to organize them in the YO
         │   ├── image1.txt
         │   ├── image2.txt
         │   └── ...
-        ├── val/
-        │   ├── image1.txt
-        │   ├── image2.txt
-        │   └── ...
+        └── val/
+            ├── image1.txt
+            ├── image2.txt
+            └── ...
     ```
     - **`images/train/`**: Contains all training images.
     - **`images/val/`**: Contains all validation images.
