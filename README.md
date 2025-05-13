@@ -17,7 +17,7 @@
         <img alt="issues" src="https://img.shields.io/github/issues/CQNU-ZhangLab/SFFNet?color=olive&style=rounded">
     </a>
     <a href="https://github.com/CQNU-ZhangLab/SFFNet">
-        <img alt="stars" src="https://img.shields.io/github/stars/CQNU-ZhangLab/SFFNet">
+        <img alt="stars" src="https://img.shields.io/github/stars/CQNU-ZhangLab/SFFNet?kill_cache=1">
     </a>
     <a href="mailto:2023210516058@stu.cqnu.edu.cn">
         <img alt="Contact Us" src="https://img.shields.io/badge/Contact-Email-yellow">
