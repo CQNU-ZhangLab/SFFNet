@@ -1,11 +1,3 @@
-**📢 Important Notice (Please Read First)**
-
-感谢您对SFFNet项目的关注。近期我们已提前将论文手稿上传至arXiv中发布。关于本仓库的当前状态，请注意以下几点：
-
-> * **代码重构中：** 在前期研究中，为了验证各类假设，我们构建了繁杂的实验分支。此外，由于本论文之前为了回应审稿专家的意见，我们又补充进行了大量额外的验证与对比实验，这进一步增加了当前代码库的复杂度和冗余度。为了确保最终开源代码的规范性与高可复现性，我们正在对所有实验代码进行彻底的清理与重构。因此，本仓库目前提供的仅为早期的基础模型框架，当前公开的代码暂未包含核心创新组件。
-> * **仓库迁移和未来发布：** 近期，我们的实验室名称及团队架构已完成更新。因此，经过完整梳理包含核心组件的最终版代码，将统一发布至我们**全新的团队仓库**中。届时，我们会在本页面更新新仓库的链接。
-
-
 <p align="center">
   <img src="figures/title.png" width=70%> <br>
 </p>
@@ -48,7 +40,7 @@
   Lei Huang<sup>4</sup>
 </div>
 
-  
+
 <p align="center">
 <i>
 1. Chongqing Normal University &nbsp; 2. CETC Yizhihang (Chongqing) Technology Co., Ltd &nbsp; 3. Weifang University &nbsp; 4. Ocean University of China
@@ -149,7 +141,7 @@ To train on the VisDrone and UAVDT datasets, you need to organize them in the YO
 
 2. **Update Configuration Files:**
 
-    Modify your [VisDrone.yml](https://github.com/CQNU-ZhangLab/SFFNet/blob/main/ultralytics/cfg/datasets/VisDrone.yaml) or [UAVDT.yml](https://github.com/CQNU-ZhangLab/SFFNet/blob/main/ultralytics/cfg/datasets/UAVDT.yaml)
+    Modify your [VisDrone.yaml](https://github.com/CQNU-ZhangLab/SFFNet/blob/main/ultralytics/cfg/datasets/VisDrone.yaml) or [UAVDT.yaml](https://github.com/CQNU-ZhangLab/SFFNet/blob/main/ultralytics/cfg/datasets/UAVDT.yaml)
 
     ```yaml
     path: # dataset root dir
@@ -169,18 +161,21 @@ To train on the VisDrone and UAVDT datasets, you need to organize them in the YO
       7: awning-tricycle
       8: bus
       9: motor
-
+    
     ```
 
+## training 🏋️‍♂️
 
-
-## Quick validation ✅
-```
-python val.py
-```
-## Quick training 🏋️‍♂️
 ```
 python train.py
+```
+
+After training, set the checkpoint path in `val.py` to your own trained `best.pt` before validation.
+
+## validation ✅
+
+```
+python val.py
 ```
 ## Acknowledgement 🙏
 
@@ -205,5 +200,7 @@ If you find our paper useful for your research, please consider citing:
       eprint={2604.03176},
       archivePrefix={arXiv},
       primaryClass={cs.CV},
-      url={[https://arxiv.org/abs/2604.03176](https://arxiv.org/abs/2604.03176)}
+      url={https://arxiv.org/abs/2604.03176}
 }
+
+```

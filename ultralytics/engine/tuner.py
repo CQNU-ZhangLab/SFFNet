@@ -28,6 +28,7 @@ import torch
 from ultralytics.cfg import get_cfg, get_save_dir
 from ultralytics.utils import DEFAULT_CFG, LOGGER, callbacks, colorstr, remove_colorstr, yaml_print, yaml_save
 from ultralytics.utils.plotting import plot_tune_results
+from ultralytics.utils.torch_utils import torch_load_compat
 
 
 class Tuner:
@@ -194,7 +195,7 @@ class Tuner:
                 cmd = ["yolo", "train", *(f"{k}={v}" for k, v in train_args.items())]
                 return_code = subprocess.run(cmd, check=True).returncode
                 ckpt_file = weights_dir / ("best.pt" if (weights_dir / "best.pt").exists() else "last.pt")
-                metrics = torch.load(ckpt_file)["train_metrics"]
+                metrics = torch_load_compat(ckpt_file, map_location="cpu", weights_only=False)["train_metrics"]
                 assert return_code == 0, "training failed"
 
             except Exception as e:
@@ -218,7 +219,7 @@ class Tuner:
                 for ckpt in weights_dir.glob("*.pt"):
                     shutil.copy2(ckpt, self.tune_dir / "weights")
             elif cleanup:
-                shutil.rmtree(weights_dir, ignore_errors=True)  # remove iteration weights/ dir to reduce storage space
+                shutil.rmtree(ckpt_file.parent)  # remove iteration weights/ dir to reduce storage space
 
             # Plot tune results
             plot_tune_results(self.tune_csv)

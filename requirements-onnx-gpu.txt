@@ -1,0 +1,3 @@
+# Optional GPU-backed ONNX Runtime.
+# Install requirements.txt first, uninstall onnxruntime, and then install this file.
+onnxruntime-gpu==1.18.0

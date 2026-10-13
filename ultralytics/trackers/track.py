@@ -7,7 +7,6 @@ import torch
 
 from ultralytics.utils import IterableSimpleNamespace, yaml_load
 from ultralytics.utils.checks import check_yaml
-
 from .bot_sort import BOTSORT
 from .byte_tracker import BYTETracker
 
@@ -32,7 +31,7 @@ def on_predict_start(predictor: object, persist: bool = False) -> None:
     tracker = check_yaml(predictor.args.tracker)
     cfg = IterableSimpleNamespace(**yaml_load(tracker))
 
-    if cfg.tracker_type not in {"bytetrack", "botsort"}:
+    if cfg.tracker_type not in ["bytetrack", "botsort"]:
         raise AssertionError(f"Only 'bytetrack' and 'botsort' are supported for now, but got '{cfg.tracker_type}'")
 
     trackers = []
@@ -73,7 +72,8 @@ def on_predict_postprocess_end(predictor: object, persist: bool = False) -> None
         idx = tracks[:, -1].astype(int)
         predictor.results[i] = predictor.results[i][idx]
 
-        update_args = {"obb" if is_obb else "boxes": torch.as_tensor(tracks[:, :-1])}
+        update_args = dict()
+        update_args["obb" if is_obb else "boxes"] = torch.as_tensor(tracks[:, :-1])
         predictor.results[i].update(**update_args)
 
 

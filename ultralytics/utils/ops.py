@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
+import torchvision
 
 from ultralytics.utils import LOGGER
 from ultralytics.utils.metrics import batch_probiou
@@ -158,135 +159,6 @@ def nms_rotated(boxes, scores, threshold=0.45):
     pick = torch.nonzero(ious.max(dim=0)[0] < threshold).squeeze_(-1)
     return sorted_idx[pick]
 
-def bbox_iou_for_nms(box1, box2, xywh=False, GIoU=False, DIoU=False, CIoU=False, EIoU=False, SIoU=False, ShapeIoU=False, eps=1e-7, scale=0.0):
-    """
-    Calculate Intersection over Union (IoU) of box1(1, 4) to box2(n, 4).
-
-    Args:
-        box1 (torch.Tensor): A tensor representing a single bounding box with shape (1, 4).
-        box2 (torch.Tensor): A tensor representing n bounding boxes with shape (n, 4).
-        xywh (bool, optional): If True, input boxes are in (x, y, w, h) format. If False, input boxes are in
-                               (x1, y1, x2, y2) format. Defaults to True.
-        GIoU (bool, optional): If True, calculate Generalized IoU. Defaults to False.
-        DIoU (bool, optional): If True, calculate Distance IoU. Defaults to False.
-        CIoU (bool, optional): If True, calculate Complete IoU. Defaults to False.
-        EIoU (bool, optional): If True, calculate Efficient IoU. Defaults to False.
-        SIoU (bool, optional): If True, calculate Scylla IoU. Defaults to False.
-        eps (float, optional): A small value to avoid division by zero. Defaults to 1e-7.
-
-    Returns:
-        (torch.Tensor): IoU, GIoU, DIoU, or CIoU values depending on the specified flags.
-    """
-
-    # Get the coordinates of bounding boxes
-    if xywh:  # transform from xywh to xyxy
-        (x1, y1, w1, h1), (x2, y2, w2, h2) = box1.chunk(4, -1), box2.chunk(4, -1)
-        w1_, h1_, w2_, h2_ = w1 / 2, h1 / 2, w2 / 2, h2 / 2
-        b1_x1, b1_x2, b1_y1, b1_y2 = x1 - w1_, x1 + w1_, y1 - h1_, y1 + h1_
-        b2_x1, b2_x2, b2_y1, b2_y2 = x2 - w2_, x2 + w2_, y2 - h2_, y2 + h2_
-    else:  # x1, y1, x2, y2 = box1
-        b1_x1, b1_y1, b1_x2, b1_y2 = box1.chunk(4, -1)
-        b2_x1, b2_y1, b2_x2, b2_y2 = box2.chunk(4, -1)
-        w1, h1 = b1_x2 - b1_x1, b1_y2 - b1_y1 + eps
-        w2, h2 = b2_x2 - b2_x1, b2_y2 - b2_y1 + eps
-
-    # Intersection area
-    inter = (b1_x2.minimum(b2_x2) - b1_x1.maximum(b2_x1)).clamp_(0) * \
-            (b1_y2.minimum(b2_y2) - b1_y1.maximum(b2_y1)).clamp_(0)
-
-    # Union Area
-    union = w1 * h1 + w2 * h2 - inter + eps
-
-    # IoU
-    iou = inter / union
-    if CIoU or DIoU or GIoU or EIoU or SIoU or ShapeIoU:
-        cw = b1_x2.maximum(b2_x2) - b1_x1.minimum(b2_x1)  # convex (smallest enclosing box) width
-        ch = b1_y2.maximum(b2_y2) - b1_y1.minimum(b2_y1)  # convex height
-        if CIoU or DIoU or EIoU or SIoU:  # Distance or Complete IoU https://arxiv.org/abs/1911.08287v1
-            c2 = cw ** 2 + ch ** 2 + eps  # convex diagonal squared
-            rho2 = ((b2_x1 + b2_x2 - b1_x1 - b1_x2) ** 2 + (b2_y1 + b2_y2 - b1_y1 - b1_y2) ** 2) / 4  # center dist ** 2
-            if CIoU:  # https://github.com/Zzh-tju/DIoU-SSD-pytorch/blob/master/utils/box/box_utils.py#L47
-                v = (4 / math.pi ** 2) * (torch.atan(w2 / h2) - torch.atan(w1 / h1)).pow(2)
-                with torch.no_grad():
-                    alpha = v / (v - iou + (1 + eps))
-                return iou - (rho2 / c2 + v * alpha)  # CIoU
-            elif EIoU:
-                rho_w2 = ((b2_x2 - b2_x1) - (b1_x2 - b1_x1)) ** 2
-                rho_h2 = ((b2_y2 - b2_y1) - (b1_y2 - b1_y1)) ** 2
-                cw2 = cw ** 2 + eps
-                ch2 = ch ** 2 + eps
-                return iou - (rho2 / c2 + rho_w2 / cw2 + rho_h2 / ch2) # EIoU
-            elif SIoU:
-                # SIoU Loss https://arxiv.org/pdf/2205.12740.pdf
-                s_cw = (b2_x1 + b2_x2 - b1_x1 - b1_x2) * 0.5 + eps
-                s_ch = (b2_y1 + b2_y2 - b1_y1 - b1_y2) * 0.5 + eps
-                sigma = torch.pow(s_cw ** 2 + s_ch ** 2, 0.5)
-                sin_alpha_1 = torch.abs(s_cw) / sigma
-                sin_alpha_2 = torch.abs(s_ch) / sigma
-                threshold = pow(2, 0.5) / 2
-                sin_alpha = torch.where(sin_alpha_1 > threshold, sin_alpha_2, sin_alpha_1)
-                angle_cost = torch.cos(torch.arcsin(sin_alpha) * 2 - math.pi / 2)
-                rho_x = (s_cw / cw) ** 2
-                rho_y = (s_ch / ch) ** 2
-                gamma = angle_cost - 2
-                distance_cost = 2 - torch.exp(gamma * rho_x) - torch.exp(gamma * rho_y)
-                omiga_w = torch.abs(w1 - w2) / torch.max(w1, w2)
-                omiga_h = torch.abs(h1 - h2) / torch.max(h1, h2)
-                shape_cost = torch.pow(1 - torch.exp(-1 * omiga_w), 4) + torch.pow(1 - torch.exp(-1 * omiga_h), 4)
-                return iou - 0.5 * (distance_cost + shape_cost) + eps # SIoU
-            elif ShapeIoU:
-                #Shape-Distance    #Shape-Distance    #Shape-Distance    #Shape-Distance    #Shape-Distance    #Shape-Distance    #Shape-Distance  
-                ww = 2 * torch.pow(w2, scale) / (torch.pow(w2, scale) + torch.pow(h2, scale))
-                hh = 2 * torch.pow(h2, scale) / (torch.pow(w2, scale) + torch.pow(h2, scale))
-                cw = torch.max(b1_x2, b2_x2) - torch.min(b1_x1, b2_x1)  # convex width
-                ch = torch.max(b1_y2, b2_y2) - torch.min(b1_y1, b2_y1)  # convex height
-                c2 = cw ** 2 + ch ** 2 + eps                            # convex diagonal squared
-                center_distance_x = ((b2_x1 + b2_x2 - b1_x1 - b1_x2) ** 2) / 4
-                center_distance_y = ((b2_y1 + b2_y2 - b1_y1 - b1_y2) ** 2) / 4
-                center_distance = hh * center_distance_x + ww * center_distance_y
-                distance = center_distance / c2
-
-                #Shape-Shape    #Shape-Shape    #Shape-Shape    #Shape-Shape    #Shape-Shape    #Shape-Shape    #Shape-Shape    #Shape-Shape    
-                omiga_w = hh * torch.abs(w1 - w2) / torch.max(w1, w2)
-                omiga_h = ww * torch.abs(h1 - h2) / torch.max(h1, h2)
-                shape_cost = torch.pow(1 - torch.exp(-1 * omiga_w), 4) + torch.pow(1 - torch.exp(-1 * omiga_h), 4)
-                return iou - distance - 0.5 * shape_cost
-            return iou - rho2 / c2  # DIoU
-        c_area = cw * ch + eps  # convex area
-        return iou - (c_area - union) / c_area  # GIoU https://arxiv.org/pdf/1902.09630.pdf
-    return iou  # IoU
-
-def soft_nms(bboxes, scores, iou_thresh=0.5, sigma=0.5,score_threshold=0.25):
-    
-    order = torch.arange(0, scores.size(0)).to(bboxes.device)
-    keep = []
-    
-    while order.numel() > 1:
-        if order.numel() == 1:
-            keep.append(order[0])
-            break
-        else:
-            i = order[0]
-            keep.append(i)
-        
-        iou = bbox_iou_for_nms(bboxes[i:i+1], bboxes[order[1:]], GIoU=False, DIoU=False, CIoU=False, EIoU=False, SIoU=False, ShapeIoU=False, scale=0.0).squeeze()
-        
-        idx = (iou > iou_thresh).nonzero().squeeze()
-        if idx.numel() > 0: 
-            iou = iou[idx] 
-            newScores = torch.exp(-torch.pow(iou,2)/sigma)
-            scores[order[idx+1]] *= newScores
-        
-        newOrder = (scores[order[1:]] > score_threshold).nonzero().squeeze() 
-        if newOrder.numel() == 0: 
-            break
-        else:
-            maxScoreIndex = torch.argmax(scores[order[newOrder+1]]) 
-            if maxScoreIndex != 0: 
-                newOrder[[0,maxScoreIndex],] = newOrder[[maxScoreIndex,0],]
-            order = order[newOrder+1]
-    
-    return torch.LongTensor(keep)
 
 def non_max_suppression(
     prediction,
@@ -328,32 +200,22 @@ def non_max_suppression(
         max_nms (int): The maximum number of boxes into torchvision.ops.nms().
         max_wh (int): The maximum box width and height in pixels.
         in_place (bool): If True, the input prediction tensor will be modified in place.
-        rotated (bool): If Oriented Bounding Boxes (OBB) are being passed for NMS.
 
     Returns:
         (List[torch.Tensor]): A list of length batch_size, where each element is a tensor of
             shape (num_boxes, 6 + num_masks) containing the kept boxes, with columns
             (x1, y1, x2, y2, confidence, class, mask1, mask2, ...).
     """
-    import torchvision  # scope for faster 'import ultralytics'
 
     # Checks
     assert 0 <= conf_thres <= 1, f"Invalid Confidence threshold {conf_thres}, valid values are between 0.0 and 1.0"
     assert 0 <= iou_thres <= 1, f"Invalid IoU {iou_thres}, valid values are between 0.0 and 1.0"
     if isinstance(prediction, (list, tuple)):  # YOLOv8 model in validation model, output = (inference_out, loss_out)
         prediction = prediction[0]  # select only inference output
-    if classes is not None:
-        classes = torch.tensor(classes, device=prediction.device)
 
-    if prediction.shape[-1] == 6:  # end-to-end model (BNC, i.e. 1,300,6)
-        output = [pred[pred[:, 4] > conf_thres] for pred in prediction]
-        if classes is not None:
-            output = [pred[(pred[:, 5:6] == classes).any(1)] for pred in output]
-        return output
-
-    bs = prediction.shape[0]  # batch size (BCN, i.e. 1,84,6300)
+    bs = prediction.shape[0]  # batch size
     nc = nc or (prediction.shape[1] - 4)  # number of classes
-    nm = prediction.shape[1] - nc - 4  # number of masks
+    nm = prediction.shape[1] - nc - 4
     mi = 4 + nc  # mask start index
     xc = prediction[:, 4:mi].amax(1) > conf_thres  # candidates
 
@@ -400,7 +262,7 @@ def non_max_suppression(
 
         # Filter by class
         if classes is not None:
-            x = x[(x[:, 5:6] == classes).any(1)]
+            x = x[(x[:, 5:6] == torch.tensor(classes, device=x.device)).any(1)]
 
         # Check shape
         n = x.shape[0]  # number of boxes
@@ -418,7 +280,6 @@ def non_max_suppression(
         else:
             boxes = x[:, :4] + c  # boxes (offset by class)
             i = torchvision.ops.nms(boxes, scores, iou_thres)  # NMS
-            # i = soft_nms(boxes, scores, iou_thres) $ Soft-NMS
         i = i[:max_det]  # limit detections
 
         # # Experimental
@@ -541,7 +402,7 @@ def xyxy2xywh(x):
 def xywh2xyxy(x):
     """
     Convert bounding box coordinates from (x, y, width, height) format to (x1, y1, x2, y2) format where (x1, y1) is the
-    top-left corner and (x2, y2) is the bottom-right corner. Note: ops per 2 channels faster than per channel.
+    top-left corner and (x2, y2) is the bottom-right corner.
 
     Args:
         x (np.ndarray | torch.Tensor): The input bounding box coordinates in (x, y, width, height) format.
@@ -551,10 +412,12 @@ def xywh2xyxy(x):
     """
     assert x.shape[-1] == 4, f"input shape last dimension expected 4 but input shape is {x.shape}"
     y = torch.empty_like(x) if isinstance(x, torch.Tensor) else np.empty_like(x)  # faster than clone/copy
-    xy = x[..., :2]  # centers
-    wh = x[..., 2:] / 2  # half width-height
-    y[..., :2] = xy - wh  # top left xy
-    y[..., 2:] = xy + wh  # bottom right xy
+    dw = x[..., 2] / 2  # half-width
+    dh = x[..., 3] / 2  # half-height
+    y[..., 0] = x[..., 0] - dw  # top left x
+    y[..., 1] = x[..., 1] - dh  # top left y
+    y[..., 2] = x[..., 0] + dw  # bottom right x
+    y[..., 3] = x[..., 1] + dh  # bottom right y
     return y
 
 
@@ -655,58 +518,59 @@ def ltwh2xywh(x):
     return y
 
 
-def xyxyxyxy2xywhr(x):
+def xyxyxyxy2xywhr(corners):
     """
     Convert batched Oriented Bounding Boxes (OBB) from [xy1, xy2, xy3, xy4] to [xywh, rotation]. Rotation values are
     expected in degrees from 0 to 90.
 
     Args:
-        x (numpy.ndarray | torch.Tensor): Input box corners [xy1, xy2, xy3, xy4] of shape (n, 8).
+        corners (numpy.ndarray | torch.Tensor): Input corners of shape (n, 8).
 
     Returns:
         (numpy.ndarray | torch.Tensor): Converted data in [cx, cy, w, h, rotation] format of shape (n, 5).
     """
-    is_torch = isinstance(x, torch.Tensor)
-    points = x.cpu().numpy() if is_torch else x
-    points = points.reshape(len(x), -1, 2)
+    is_torch = isinstance(corners, torch.Tensor)
+    points = corners.cpu().numpy() if is_torch else corners
+    points = points.reshape(len(corners), -1, 2)
     rboxes = []
     for pts in points:
         # NOTE: Use cv2.minAreaRect to get accurate xywhr,
         # especially some objects are cut off by augmentations in dataloader.
-        (cx, cy), (w, h), angle = cv2.minAreaRect(pts)
-        rboxes.append([cx, cy, w, h, angle / 180 * np.pi])
-    return torch.tensor(rboxes, device=x.device, dtype=x.dtype) if is_torch else np.asarray(rboxes)
+        (x, y), (w, h), angle = cv2.minAreaRect(pts)
+        rboxes.append([x, y, w, h, angle / 180 * np.pi])
+    return (
+        torch.tensor(rboxes, device=corners.device, dtype=corners.dtype)
+        if is_torch
+        else np.asarray(rboxes, dtype=points.dtype)
+    )  # rboxes
 
 
-def xywhr2xyxyxyxy(x):
+def xywhr2xyxyxyxy(rboxes):
     """
     Convert batched Oriented Bounding Boxes (OBB) from [xywh, rotation] to [xy1, xy2, xy3, xy4]. Rotation values should
     be in degrees from 0 to 90.
 
     Args:
-        x (numpy.ndarray | torch.Tensor): Boxes in [cx, cy, w, h, rotation] format of shape (n, 5) or (b, n, 5).
+        rboxes (numpy.ndarray | torch.Tensor): Boxes in [cx, cy, w, h, rotation] format of shape (n, 5) or (b, n, 5).
 
     Returns:
         (numpy.ndarray | torch.Tensor): Converted corner points of shape (n, 4, 2) or (b, n, 4, 2).
     """
-    cos, sin, cat, stack = (
-        (torch.cos, torch.sin, torch.cat, torch.stack)
-        if isinstance(x, torch.Tensor)
-        else (np.cos, np.sin, np.concatenate, np.stack)
-    )
+    is_numpy = isinstance(rboxes, np.ndarray)
+    cos, sin = (np.cos, np.sin) if is_numpy else (torch.cos, torch.sin)
 
-    ctr = x[..., :2]
-    w, h, angle = (x[..., i : i + 1] for i in range(2, 5))
+    ctr = rboxes[..., :2]
+    w, h, angle = (rboxes[..., i : i + 1] for i in range(2, 5))
     cos_value, sin_value = cos(angle), sin(angle)
     vec1 = [w / 2 * cos_value, w / 2 * sin_value]
     vec2 = [-h / 2 * sin_value, h / 2 * cos_value]
-    vec1 = cat(vec1, -1)
-    vec2 = cat(vec2, -1)
+    vec1 = np.concatenate(vec1, axis=-1) if is_numpy else torch.cat(vec1, dim=-1)
+    vec2 = np.concatenate(vec2, axis=-1) if is_numpy else torch.cat(vec2, dim=-1)
     pt1 = ctr + vec1 + vec2
     pt2 = ctr + vec1 - vec2
     pt3 = ctr - vec1 - vec2
     pt4 = ctr - vec1 + vec2
-    return stack([pt1, pt2, pt3, pt4], -2)
+    return np.stack([pt1, pt2, pt3, pt4], axis=-2) if is_numpy else torch.stack([pt1, pt2, pt3, pt4], dim=-2)
 
 
 def ltwh2xyxy(x):
@@ -797,10 +661,10 @@ def process_mask_upsample(protos, masks_in, bboxes, shape):
         (torch.Tensor): The upsampled masks.
     """
     c, mh, mw = protos.shape  # CHW
-    masks = (masks_in @ protos.float().view(c, -1)).view(-1, mh, mw)
+    masks = (masks_in @ protos.float().view(c, -1)).sigmoid().view(-1, mh, mw)
     masks = F.interpolate(masks[None], shape, mode="bilinear", align_corners=False)[0]  # CHW
     masks = crop_mask(masks, bboxes)  # CHW
-    return masks.gt_(0.0)
+    return masks.gt_(0.5)
 
 
 def process_mask(protos, masks_in, bboxes, shape, upsample=False):
@@ -821,7 +685,7 @@ def process_mask(protos, masks_in, bboxes, shape, upsample=False):
 
     c, mh, mw = protos.shape  # CHW
     ih, iw = shape
-    masks = (masks_in @ protos.float().view(c, -1)).view(-1, mh, mw)  # CHW
+    masks = (masks_in @ protos.float().view(c, -1)).sigmoid().view(-1, mh, mw)  # CHW
     width_ratio = mw / iw
     height_ratio = mh / ih
 
@@ -834,7 +698,7 @@ def process_mask(protos, masks_in, bboxes, shape, upsample=False):
     masks = crop_mask(masks, downsampled_bboxes)  # CHW
     if upsample:
         masks = F.interpolate(masks[None], shape, mode="bilinear", align_corners=False)[0]  # CHW
-    return masks.gt_(0.0)
+    return masks.gt_(0.5)
 
 
 def process_mask_native(protos, masks_in, bboxes, shape):
@@ -851,10 +715,10 @@ def process_mask_native(protos, masks_in, bboxes, shape):
         masks (torch.Tensor): The returned masks with dimensions [h, w, n]
     """
     c, mh, mw = protos.shape  # CHW
-    masks = (masks_in @ protos.float().view(c, -1)).view(-1, mh, mw)
+    masks = (masks_in @ protos.float().view(c, -1)).sigmoid().view(-1, mh, mw)
     masks = scale_masks(masks[None], shape)[0]  # CHW
     masks = crop_mask(masks, bboxes)  # CHW
-    return masks.gt_(0.0)
+    return masks.gt_(0.5)
 
 
 def scale_masks(masks, shape, padding=True):
@@ -921,7 +785,7 @@ def regularize_rboxes(rboxes):
     Regularize rotated boxes in range [0, pi/2].
 
     Args:
-        rboxes (torch.Tensor): Input boxes of shape(N, 5) in xywhr format.
+        rboxes (torch.Tensor): (N, 5), xywhr.
 
     Returns:
         (torch.Tensor): The regularized boxes.
@@ -983,3 +847,18 @@ def clean_str(s):
         (str): a string with special characters replaced by an underscore _
     """
     return re.sub(pattern="[|@#!¡·$€%&()=?¿^*;:,¨´><+]", repl="_", string=s)
+
+def v10postprocess(preds, max_det, nc=80):
+    assert(4 + nc == preds.shape[-1])
+    boxes, scores = preds.split([4, nc], dim=-1)
+    max_scores = scores.amax(dim=-1)
+    max_scores, index = torch.topk(max_scores, max_det, dim=-1)
+    index = index.unsqueeze(-1)
+    boxes = torch.gather(boxes, dim=1, index=index.repeat(1, 1, boxes.shape[-1]))
+    scores = torch.gather(scores, dim=1, index=index.repeat(1, 1, scores.shape[-1]))
+
+    scores, index = torch.topk(scores.flatten(1), max_det, dim=-1)
+    labels = index % nc
+    index = index // nc
+    boxes = boxes.gather(dim=1, index=index.unsqueeze(-1).repeat(1, 1, boxes.shape[-1]))
+    return boxes, scores, labels
