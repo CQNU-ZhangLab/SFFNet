@@ -41,11 +41,10 @@ class DetectionTrainer(BaseTrainer):
         """
         gs = max(int(de_parallel(self.model).stride.max() if self.model else 0), 32)
         return build_yolo_dataset(self.args, img_path, batch, self.data, mode=mode, rect=mode == "val", stride=gs)
-        # return build_yolo_dataset(self.args, img_path, batch, self.data, mode=mode, rect=False, stride=gs)
 
     def get_dataloader(self, dataset_path, batch_size=16, rank=0, mode="train"):
         """Construct and return dataloader."""
-        assert mode in {"train", "val"}, f"Mode must be 'train' or 'val', not {mode}."
+        assert mode in ["train", "val"]
         with torch_distributed_zero_first(rank):  # init dataset *.cache only once if DDP
             dataset = self.build_dataset(dataset_path, mode, batch_size)
         shuffle = mode == "train"

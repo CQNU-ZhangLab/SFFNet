@@ -3,7 +3,7 @@
 Check a model's accuracy on a test or val split of a dataset.
 
 Usage:
-    $ yolo mode=val model=yolov8n.pt data=coco8.yaml imgsz=640
+    $ yolo mode=val model=yolov8n.pt data=coco128.yaml imgsz=640
 
 Usage - formats:
     $ yolo mode=val model=yolov8n.pt                 # PyTorch
@@ -112,8 +112,7 @@ class BaseValidator:
         if self.training:
             self.device = trainer.device
             self.data = trainer.data
-            self.args.half = self.device.type != "cpu"  # force FP16 val during training
-            self.args.half = False  # force FP16 val during training
+            # self.args.half = self.device.type != "cpu"  # force FP16 val during training
             model = trainer.ema.ema or trainer.model
             model = model.half() if self.args.half else model.float()
             # self.model = model
@@ -140,14 +139,14 @@ class BaseValidator:
                 self.args.batch = 1  # export.py models default to batch-size 1
                 LOGGER.info(f"Forcing batch=1 square inference (1,3,{imgsz},{imgsz}) for non-PyTorch models")
 
-            if str(self.args.data).split(".")[-1] in {"yaml", "yml"}:
+            if str(self.args.data).split(".")[-1] in ("yaml", "yml"):
                 self.data = check_det_dataset(self.args.data)
             elif self.args.task == "classify":
                 self.data = check_cls_dataset(self.args.data, split=self.args.split)
             else:
                 raise FileNotFoundError(emojis(f"Dataset '{self.args.data}' for task={self.args.task} not found ❌"))
 
-            if self.device.type in {"cpu", "mps"}:
+            if self.device.type in ("cpu", "mps"):
                 self.args.workers = 0  # faster CPU val as time dominated by inference, not dataloading
             if not pt:
                 self.args.rect = False
@@ -197,10 +196,17 @@ class BaseValidator:
         self.check_stats(stats)
         self.speed = dict(zip(self.speed.keys(), (x.t / len(self.dataloader.dataset) * 1e3 for x in dt)))
         self.finalize_metrics()
-        self.print_results()
+        if not (self.args.save_json and self.is_coco and len(self.jdict)):
+            self.print_results()
         self.run_callbacks("on_val_end")
         if self.training:
             model.float()
+            if self.args.save_json and self.jdict:
+                with open(str(self.save_dir / "predictions.json"), "w") as f:
+                    LOGGER.info(f"Saving {f.name}...")
+                    json.dump(self.jdict, f)  # flatten and save
+                stats = self.eval_json(stats)  # update stats
+                stats['fitness'] = stats['metrics/mAP50-95(B)']
             results = {**stats, **trainer.label_loss_items(self.loss.cpu() / len(self.dataloader), prefix="val")}
             return {k: round(float(v), 5) for k, v in results.items()}  # return results as 5 decimal place floats
         else:
@@ -208,12 +214,6 @@ class BaseValidator:
                 "Speed: %.1fms preprocess, %.1fms inference, %.1fms loss, %.1fms postprocess per image"
                 % tuple(self.speed.values())
             )
-            total_time_per_image = sum(self.speed.values()) / 1000  # 将毫秒转换为秒
-            fps = 1 / total_time_per_image  # 计算FPS
-            LOGGER.info("FPS: {:.2f}".format(fps))
-
-
-
             if self.args.save_json and self.jdict:
                 with open(str(self.save_dir / "predictions.json"), "w") as f:
                     LOGGER.info(f"Saving {f.name}...")

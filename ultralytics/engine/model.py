@@ -1,27 +1,17 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 
 import inspect
+import sys
 from pathlib import Path
-from typing import List, Union
+from typing import Union
 
 import numpy as np
 import torch
 
 from ultralytics.cfg import TASK2DATA, get_cfg, get_save_dir
-from ultralytics.engine.results import Results
-from ultralytics.hub import HUB_WEB_ROOT, HUBTrainingSession
+from ultralytics.hub.utils import HUB_WEB_ROOT
 from ultralytics.nn.tasks import attempt_load_one_weight, guess_model_task, nn, yaml_model_load
-from ultralytics.utils import (
-    ARGV,
-    ASSETS,
-    DEFAULT_CFG_DICT,
-    LOGGER,
-    RANK,
-    callbacks,
-    checks,
-    emojis,
-    yaml_load,
-)
+from ultralytics.utils import ASSETS, DEFAULT_CFG_DICT, LOGGER, RANK, SETTINGS, callbacks, checks, emojis, yaml_load
 
 
 class Model(nn.Module):
@@ -75,6 +65,7 @@ class Model(nn.Module):
         add_callback: Adds a callback function for an event.
         clear_callback: Clears all callbacks for an event.
         reset_callbacks: Resets all callbacks to their default functions.
+        _get_hub_session: Retrieves or creates an Ultralytics HUB session.
         is_triton_model: Checks if a model is a Triton Server model.
         is_hub_model: Checks if a model is an Ultralytics HUB model.
         _reset_ckpt_args: Resets checkpoint arguments when loading a PyTorch model.
@@ -133,17 +124,18 @@ class Model(nn.Module):
         # Check if Ultralytics HUB model from https://hub.ultralytics.com
         if self.is_hub_model(model):
             # Fetch model from HUB
-            checks.check_requirements("hub-sdk>=0.0.8")
-            self.session = HUBTrainingSession.create_session(model)
+            checks.check_requirements("hub-sdk>=0.0.6")
+            self.session = self._get_hub_session(model)
             model = self.session.model_file
 
         # Check if Triton Server model
         elif self.is_triton_model(model):
             self.model_name = self.model = model
+            self.task = task
             return
 
         # Load or create new YOLO model
-        if Path(model).suffix in {".yaml", ".yml"}:
+        if Path(model).suffix in (".yaml", ".yml"):
             self._new(model, task=task, verbose=verbose)
         else:
             self._load(model, task=task)
@@ -172,6 +164,14 @@ class Model(nn.Module):
             (List[ultralytics.engine.results.Results]): A list of prediction results, encapsulated in the Results class.
         """
         return self.predict(source, stream, **kwargs)
+
+    @staticmethod
+    def _get_hub_session(model: str):
+        """Creates a session for Hub Training."""
+        from ultralytics.hub.session import HUBTrainingSession
+
+        session = HUBTrainingSession(model)
+        return session if session.client.authenticated else None
 
     @staticmethod
     def is_triton_model(model: str) -> bool:
@@ -311,9 +311,8 @@ class Model(nn.Module):
             AssertionError: If the model is not a PyTorch model.
         """
         self._check_is_pytorch_model()
-        from datetime import datetime
-
         from ultralytics import __version__
+        from datetime import datetime
 
         updates = {
             "date": datetime.now().isoformat(),
@@ -389,7 +388,7 @@ class Model(nn.Module):
         stream: bool = False,
         predictor=None,
         **kwargs,
-    ) -> List[Results]:
+    ) -> list:
         """
         Performs predictions on the given image source using the YOLO model.
 
@@ -422,8 +421,8 @@ class Model(nn.Module):
             source = ASSETS
             LOGGER.warning(f"WARNING ⚠️ 'source' is missing. Using 'source={source}'.")
 
-        is_cli = (ARGV[0].endswith("yolo") or ARGV[0].endswith("ultralytics")) and any(
-            x in ARGV for x in ("predict", "track", "mode=predict", "mode=track")
+        is_cli = (sys.argv[0].endswith("yolo") or sys.argv[0].endswith("ultralytics")) and any(
+            x in sys.argv for x in ("predict", "track", "mode=predict", "mode=track")
         )
 
         custom = {"conf": 0.25, "batch": 1, "save": is_cli, "mode": "predict"}  # method defaults
@@ -447,7 +446,7 @@ class Model(nn.Module):
         stream: bool = False,
         persist: bool = False,
         **kwargs,
-    ) -> List[Results]:
+    ) -> list:
         """
         Conducts object tracking on the specified input source using the registered trackers.
 
@@ -505,7 +504,7 @@ class Model(nn.Module):
                 used to customize various aspects of the validation process.
 
         Returns:
-            (ultralytics.utils.metrics.DetMetrics): Validation metrics obtained from the validation process.
+            (dict): Validation metrics obtained from the validation process.
 
         Raises:
             AssertionError: If the model is not a PyTorch model.
@@ -562,7 +561,7 @@ class Model(nn.Module):
     def export(
         self,
         **kwargs,
-    ) -> str:
+    ):
         """
         Exports the model to a different format suitable for deployment.
 
@@ -578,7 +577,7 @@ class Model(nn.Module):
                 model's overrides and method defaults.
 
         Returns:
-            (str): The exported model filename in the specified format, or an object related to the export process.
+            (object): The exported model in the specified format, or an object related to the export process.
 
         Raises:
             AssertionError: If the model is not a PyTorch model.
@@ -631,12 +630,7 @@ class Model(nn.Module):
         checks.check_pip_update_available()
 
         overrides = yaml_load(checks.check_yaml(kwargs["cfg"])) if kwargs.get("cfg") else self.overrides
-        custom = {
-            # NOTE: handle the case when 'cfg' includes 'data'.
-            "data": overrides.get("data") or DEFAULT_CFG_DICT["data"] or TASK2DATA[self.task],
-            "model": self.overrides["model"],
-            "task": self.task,
-        }  # method defaults
+        custom = {"data": DEFAULT_CFG_DICT["data"] or TASK2DATA[self.task]}  # method defaults
         args = {**overrides, **custom, **kwargs, "mode": "train"}  # highest priority args on the right
         if args.get("resume"):
             args["resume"] = self.ckpt_path
@@ -646,10 +640,23 @@ class Model(nn.Module):
             self.trainer.model = self.trainer.get_model(weights=self.model if self.ckpt else None, cfg=self.model.yaml)
             self.model = self.trainer.model
 
+            if SETTINGS["hub"] is True and not self.session:
+                # Create a model in HUB
+                try:
+                    self.session = self._get_hub_session(self.model_name)
+                    if self.session:
+                        self.session.create_model(args)
+                        # Check model was created
+                        if not getattr(self.session.model, "id", None):
+                            self.session = None
+                except (PermissionError, ModuleNotFoundError):
+                    # Ignore PermissionError and ModuleNotFoundError which indicates hub-sdk not installed
+                    pass
+
         self.trainer.hub_session = self.session  # attach optional HUB session
         self.trainer.train()
         # Update model and cfg after training
-        if RANK in {-1, 0}:
+        if RANK in (-1, 0):
             ckpt = self.trainer.best if self.trainer.best.exists() else self.trainer.last
             self.model, _ = attempt_load_one_weight(ckpt)
             self.overrides = self.model.args
@@ -716,12 +723,7 @@ class Model(nn.Module):
         """
         from ultralytics.nn.autobackend import check_class_names
 
-        if hasattr(self.model, "names"):
-            return check_class_names(self.model.names)
-        if not self.predictor:  # export formats will not have predictor defined until predict() is called
-            self.predictor = self._smart_load("predictor")(overrides=self.overrides, _callbacks=self.callbacks)
-            self.predictor.setup_model(model=self.model, verbose=False)
-        return self.predictor.model.names
+        return check_class_names(self.model.names) if hasattr(self.model, "names") else None
 
     @property
     def device(self) -> torch.device:
@@ -819,13 +821,3 @@ class Model(nn.Module):
             task_map (dict): The map of model task to mode classes.
         """
         raise NotImplementedError("Please provide task map for your model!")
-
-    def profile(self, imgsz):
-        if type(imgsz) is int:
-            inputs = torch.randn((2, 3, imgsz, imgsz))
-        else:
-            inputs = torch.randn((2, 3, imgsz[0], imgsz[1]))
-        if next(self.model.parameters()).device.type == 'cuda':
-            return self.model.predict(inputs.to(torch.device('cuda')), profile=True)
-        else:
-            self.model.predict(inputs, profile=True)

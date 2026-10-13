@@ -3,6 +3,8 @@
 import time
 from threading import Thread
 
+import pandas as pd
+
 from ultralytics import Explorer
 from ultralytics.utils import ROOT, SETTINGS
 from ultralytics.utils.checks import check_requirements
@@ -146,14 +148,12 @@ def run_ai_query():
             'OpenAI API key not found in settings. Please run yolo settings openai_api_key="..."'
         )
         return
-    import pandas  # scope for faster 'import ultralytics'
-
     st.session_state["error"] = None
     query = st.session_state.get("ai_query")
     if query.rstrip().lstrip():
         exp = st.session_state["explorer"]
         res = exp.ask_ai(query)
-        if not isinstance(res, pandas.DataFrame) or res.empty:
+        if not isinstance(res, pd.DataFrame) or res.empty:
             st.session_state["error"] = "No results found using AI generated query. Try another query or rerun it."
             return
         st.session_state["imgs"] = res["im_file"].to_list()
@@ -197,11 +197,12 @@ def layout():
     imgs = []
     if st.session_state.get("error"):
         st.error(st.session_state["error"])
-    elif st.session_state.get("imgs"):
-        imgs = st.session_state.get("imgs")
     else:
-        imgs = exp.table.to_lance().to_table(columns=["im_file"]).to_pydict()["im_file"]
-        st.session_state["res"] = exp.table.to_arrow()
+        if st.session_state.get("imgs"):
+            imgs = st.session_state.get("imgs")
+        else:
+            imgs = exp.table.to_lance().to_table(columns=["im_file"]).to_pydict()["im_file"]
+            st.session_state["res"] = exp.table.to_arrow()
     total_imgs, selected_imgs = len(imgs), []
     with col1:
         subcol1, subcol2, subcol3, subcol4, subcol5 = st.columns(5)
@@ -259,7 +260,7 @@ def layout():
 
     with col2:
         similarity_form(selected_imgs)
-        st.checkbox("Labels", value=False, key="display_labels")
+        display_labels = st.checkbox("Labels", value=False, key="display_labels")
         utralytics_explorer_docs_callback()
 
 
